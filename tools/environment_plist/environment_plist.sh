@@ -46,38 +46,62 @@ esac
 shift
 done
 
+os_build=$(sw_vers -buildVersion)
+
 set +e
 PLATFORM_DIR=$(/usr/bin/xcrun --sdk "${PLATFORM}" --show-sdk-platform-path 2>/dev/null)
 XCRUN_EXITCODE=$?
 set -e
-if [[ ${XCRUN_EXITCODE} -ne 0 ]] ; then
-  echo "environment_plist: SDK not located. This may indicate that the xcode \
-and SDK version pair is not available."
-  # Since this already failed, assume this is going to fail again. With
-  # set -e, this will produce the appropriate stderr and error code.
-  /usr/bin/xcrun --sdk "${PLATFORM}" --show-sdk-platform-path 2>&1
+if [[ ${XCRUN_EXITCODE} -eq 0 ]] ; then
+  # A full Xcode installation (or Xcode-style developer directory) is
+  # available; read the environment values from the platform's Info.plist and
+  # xcodebuild.
+  PLATFORM_PLIST="${PLATFORM_DIR}"/Info.plist
+  compiler=$(/usr/libexec/PlistBuddy -c "Print :DefaultProperties:DEFAULT_COMPILER" "${PLATFORM_PLIST}")
+  xcodebuild_version_sdk_output=$(/usr/bin/xcrun xcodebuild -version -sdk "${PLATFORM}" 2>/dev/null)
+  xcodebuild_version_output=$(/usr/bin/xcrun xcodebuild -version 2>/dev/null)
+  # Parses 'PlatformVersion N.N' into N.N.
+  platform_version=$(echo "${xcodebuild_version_sdk_output}" | grep PlatformVersion | cut -d ' ' -f2)
+  # Parses 'ProductBuildVersion NNNN' into NNNN.
+  sdk_build=$(echo "${xcodebuild_version_sdk_output}" | grep ProductBuildVersion | cut -d ' ' -f2)
+  platform_build=$"${sdk_build}"
+  # Parses 'Build version NNNN' into NNNN.
+  xcode_build=$(echo "${xcodebuild_version_output}" | grep Build | cut -d ' ' -f3)
+  # Parses 'Xcode N.N' into N.N.
+  xcode_version_string=$(echo "${xcodebuild_version_output}" | grep Xcode | cut -d ' ' -f2)
+  # Converts '7.1' -> 0710, and '7.1.1' -> 0711.
+  xcode_version=$(/usr/bin/printf '%02d%d%d\n' $(echo "${xcode_version_string//./ }"))
+else
+  # There is no platform directory. This happens with Command Line Tools
+  # style developer directories, such as hermetic toolchains assembled from
+  # the Command Line Tools and a vendored SDK, which have no Platforms
+  # directory and no xcodebuild. Derive the values from the SDK itself; the
+  # Xcode version and build cannot be known without an Xcode installation, so
+  # those fields are left empty.
+  set +e
+  SDK_DIR=$(/usr/bin/xcrun --sdk "${PLATFORM}" --show-sdk-path 2>/dev/null)
+  XCRUN_EXITCODE=$?
+  set -e
+  if [[ ${XCRUN_EXITCODE} -ne 0 ]] ; then
+    echo "environment_plist: SDK not located. This may indicate that the \
+xcode and SDK version pair is not available."
+    # Since this already failed, assume this is going to fail again. With
+    # set -e, this will produce the appropriate stderr and error code.
+    /usr/bin/xcrun --sdk "${PLATFORM}" --show-sdk-path 2>&1
+  fi
+  SDK_SETTINGS="${SDK_DIR}/SDKSettings.plist"
+  SDK_SYSTEM_VERSION="${SDK_DIR}/System/Library/CoreServices/SystemVersion.plist"
+  compiler=$(/usr/libexec/PlistBuddy -c "Print :DefaultProperties:DEFAULT_COMPILER" "${SDK_SETTINGS}" 2>/dev/null || echo "")
+  platform_version=$(/usr/libexec/PlistBuddy -c "Print :Version" "${SDK_SETTINGS}" 2>/dev/null || echo "")
+  sdk_build=$(/usr/libexec/PlistBuddy -c "Print :ProductBuildVersion" "${SDK_SYSTEM_VERSION}" 2>/dev/null || echo "")
+  platform_build=$"${sdk_build}"
+  xcode_build=""
+  xcode_version=""
 fi
 
-PLATFORM_PLIST="${PLATFORM_DIR}"/Info.plist
 TEMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/bazel_environment.XXXXXX")
 PLIST="${TEMPDIR}/env.plist"
 trap 'rm -rf "${TEMPDIR}"' ERR EXIT
-
-os_build=$(sw_vers -buildVersion)
-compiler=$(/usr/libexec/PlistBuddy -c "Print :DefaultProperties:DEFAULT_COMPILER" "${PLATFORM_PLIST}")
-xcodebuild_version_sdk_output=$(/usr/bin/xcrun xcodebuild -version -sdk "${PLATFORM}" 2>/dev/null)
-xcodebuild_version_output=$(/usr/bin/xcrun xcodebuild -version 2>/dev/null)
-# Parses 'PlatformVersion N.N' into N.N.
-platform_version=$(echo "${xcodebuild_version_sdk_output}" | grep PlatformVersion | cut -d ' ' -f2)
-# Parses 'ProductBuildVersion NNNN' into NNNN.
-sdk_build=$(echo "${xcodebuild_version_sdk_output}" | grep ProductBuildVersion | cut -d ' ' -f2)
-platform_build=$"${sdk_build}"
-# Parses 'Build version NNNN' into NNNN.
-xcode_build=$(echo "${xcodebuild_version_output}" | grep Build | cut -d ' ' -f3)
-# Parses 'Xcode N.N' into N.N.
-xcode_version_string=$(echo "${xcodebuild_version_output}" | grep Xcode | cut -d ' ' -f2)
-# Converts '7.1' -> 0710, and '7.1.1' -> 0711.
-xcode_version=$(/usr/bin/printf '%02d%d%d\n' $(echo "${xcode_version_string//./ }"))
 
 /usr/libexec/PlistBuddy \
     -c "Add :DTPlatformBuild string ${platform_build:-""}" \
