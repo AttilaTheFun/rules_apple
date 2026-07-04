@@ -486,28 +486,7 @@ def xcstringstool(_, toolargs):
   return return_code
 
 
-def _setup_hermetic_plugin_paths():
-  """Points the Xcode tools at plug-ins shipped with hermetic developer dirs.
-
-  The Interface Builder and asset catalog tools (ibtool, actool) discover
-  their platform support from plug-ins in the containing Xcode.app bundle's
-  Contents/PlugIns directory. Hermetic developer directories assembled from a
-  vendored toolchain are not Xcode.app bundles, so they place the toolchain's
-  Frameworks, SharedFrameworks, and PlugIns directories next to the developer
-  directory instead. DVTFoundation honors DVTExtraPlugInPaths as additional
-  plug-in scan roots; set it when such a sibling directory exists.
-  """
-  developer_dir = os.environ.get("DEVELOPER_DIR")
-  if not developer_dir or "DVTExtraPlugInPaths" in os.environ:
-    return
-  plugins_dir = os.path.normpath(os.path.join(developer_dir, "..", "PlugIns"))
-  if os.path.isdir(plugins_dir):
-    os.environ["DVTExtraPlugInPaths"] = plugins_dir
-
-
 def main(argv):
-  _setup_hermetic_plugin_paths()
-
   parser = argparse.ArgumentParser()
   subparsers = parser.add_subparsers()
 
